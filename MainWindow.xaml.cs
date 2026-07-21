@@ -1713,6 +1713,8 @@ public partial class MainWindow : Window
         }
     }
 
+    private string _javaRuntimeDir => System.IO.Path.Combine(_path.BasePath, "java-runtime");
+
     /// <summary>Возвращает путь к java.exe для запуска инсталляторов (использует Java из CmlLib или системную)</summary>
     private string GetInstallerJavaPath()
     {
@@ -1727,6 +1729,7 @@ public partial class MainWindow : Window
             System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Eclipse Adoptium"),
             System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft"),
             System.IO.Path.Combine(_path.BasePath, "..", "runtime"),  // CmlLib скачивает Java сюда
+            _javaRuntimeDir, // Наша скачанная Java
         };
         foreach (var dir in candidates)
         {
@@ -1735,6 +1738,126 @@ public partial class MainWindow : Window
             if (found != null) return found;
         }
         return "java"; // Фоллбэк: системный PATH
+    }
+
+    /// <summary>Определяет, какая версия Java нужна для Minecraft</summary>
+    private int GetRequiredJavaVersion(string mcVersion)
+    {
+        if (string.IsNullOrEmpty(mcVersion)) return 8;
+
+        // Minecraft 1.17+ требует Java 16+
+        // Minecraft 1.18+ требует Java 17+
+        // Minecraft 1.20.5+ требует Java 21+
+        if (mcVersion.Contains("1.20.5") || mcVersion.Contains("1.20.6") || mcVersion.Contains("1.21") || mcVersion.Contains("1.22"))
+            return 21;
+        if (mcVersion.Contains("1.18") || mcVersion.Contains("1.19") || mcVersion.Contains("1.20"))
+            return 17;
+        if (mcVersion.Contains("1.17"))
+            return 16;
+
+        return 8; // Все версии до 1.17 работают на Java 8
+    }
+
+    /// <summary>Скачивает Java с Adoptium если нужной версии нет</summary>
+    private async Task<string> EnsureJavaAvailable(int requiredVersion)
+    {
+        // Сначала проверяем системную Java
+        string existingJava = FindJavaWithVersion(requiredVersion);
+        if (!string.IsNullOrEmpty(existingJava))
+            return existingJava;
+
+        // Java не найдена — скачиваем
+        TxtStatus.Text = $"Скачивание Java {requiredVersion}...";
+
+        try
+        {
+            string downloadUrl = $"https://api.adoptium.net/v3/binary/latest/{requiredVersion}/ga/windows/x64/jdk/hotspot/normal/eclipse";
+            string zipPath = System.IO.Path.Combine(_path.BasePath, $"java-{requiredVersion}.zip");
+            string extractDir = System.IO.Path.Combine(_javaRuntimeDir, $"java-{requiredVersion}");
+
+            if (!Directory.Exists(extractDir))
+            {
+                Directory.CreateDirectory(_javaRuntimeDir);
+
+                // Скачиваем
+                using (var client = new HttpClient())
+                {
+                    client.Timeout = TimeSpan.FromMinutes(10);
+                    var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
+                    response.EnsureSuccessStatusCode();
+
+                    long? totalBytes = response.Content.Headers.ContentLength;
+                    using (var stream = await response.Content.ReadAsStreamAsync())
+                    using (var fileStream = new FileStream(zipPath, FileMode.Create, FileAccess.Write))
+                    {
+                        byte[] buffer = new byte[8192];
+                        long downloaded = 0;
+                        int bytesRead;
+
+                        while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                        {
+                            await fileStream.WriteAsync(buffer, 0, bytesRead);
+                            downloaded += bytesRead;
+
+                            if (totalBytes > 0)
+                            {
+                                int progress = (int)(downloaded * 100 / totalBytes.Value);
+                                TxtStatus.Text = $"Скачивание Java {requiredVersion}... {progress}%";
+                            }
+                        }
+                    }
+                }
+
+                // Распаковываем
+                TxtStatus.Text = $"Распаковка Java {requiredVersion}...";
+                System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, extractDir);
+
+                // Удаляем архив
+                try { File.Delete(zipPath); } catch { }
+            }
+
+            // Находим java.exe в распакованной папке
+            string javaExe = Directory.GetFiles(extractDir, "java.exe", SearchOption.AllDirectories).FirstOrDefault() ?? "";
+            if (!string.IsNullOrEmpty(javaExe))
+            {
+                TxtStatus.Text = $"Java {requiredVersion} установлена!";
+                return javaExe;
+            }
+        }
+        catch (Exception ex)
+        {
+            TxtStatus.Text = $"Ошибка скачивания Java: {ex.Message}";
+        }
+
+        return "java"; // Фоллбэк
+    }
+
+    /// <summary>Ищет Java нужной версии в стандартных папках</summary>
+    private string FindJavaWithVersion(int requiredVersion)
+    {
+        var candidates = new[]
+        {
+            _javaRuntimeDir,
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Java"),
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Eclipse Adoptium"),
+            System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Microsoft"),
+            System.IO.Path.Combine(_path.BasePath, "..", "runtime"),
+        };
+
+        foreach (var dir in candidates)
+        {
+            if (!string.IsNullOrEmpty(dir) && Directory.Exists(dir))
+            {
+                var javaFiles = Directory.GetFiles(dir, "java.exe", SearchOption.AllDirectories);
+                foreach (var java in javaFiles)
+                {
+                    int ver = GetJavaVersion(java);
+                    if (ver >= requiredVersion)
+                        return java;
+                }
+            }
+        }
+        return "";
     }
 
     private async Task InstallForge(string mcVersion)
@@ -1818,24 +1941,24 @@ public partial class MainWindow : Window
 
         // Находим путь к Java, который будет использовать CmlLib
         var mcVersion = await _launcher.GetVersionAsync(versionName);
-        string javaPath = launchOption.JavaPath ?? _launcher.GetJavaPath(mcVersion) ?? "java";
-        launchOption.JavaPath = javaPath; // Фиксируем путь
 
-        // ПРОВЕРКА JAVA ДЛЯ 1.17+
+        // Определяем какая Java нужна и скачиваем если нужно
+        int requiredJava = GetRequiredJavaVersion(versionName);
+        string javaPath = await EnsureJavaAvailable(requiredJava);
+        launchOption.JavaPath = javaPath;
+
+        // ПРОВЕРКА JAVA
         int javaVer = GetJavaVersion(javaPath);
-        bool isNewMc = versionName.Contains("1.17") || versionName.Contains("1.18") || 
-                       versionName.Contains("1.19") || versionName.Contains("1.20") || 
-                       versionName.Contains("1.21");
 
-        if (isNewMc && javaVer < 16)
+        if (javaVer < requiredJava)
         {
             var res = MessageBox.Show(
-                $"Вы пытаетесь запустить Minecraft {versionName}, для которого требуется Java 17.\n" +
-                $"У вас обнаружена Java {javaVer} ({javaPath}).\n\n" +
-                $"Игра, скорее всего, не запустится или вылетит.\n" +
-                $"Хотите продолжить запуск на свой страх и риск?", 
-                "Неподходящая версия Java", 
-                MessageBoxButton.YesNo, 
+                $"Minecraft {versionName} требует Java {requiredJava}.\n" +
+                $"У вас обнаружена Java {javaVer}.\n\n" +
+                $"Авто-скачивание не удалось. Установите Java {requiredJava} вручную.\n" +
+                $"Продолжить запуск на свой страх и риск?",
+                "Неподходящая версия Java",
+                MessageBoxButton.YesNo,
                 MessageBoxImage.Warning);
             
             if (res == MessageBoxResult.No) return;
