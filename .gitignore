@@ -39,3 +39,6 @@ Desktop.ini
 
 # User config (contains tokens and personal settings)
 launcher_config.json
+
+# Dev logs
+dev_log.txt
