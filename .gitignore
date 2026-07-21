@@ -1,0 +1,41 @@
+# Build results
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.cache
+
+# NuGet
+packages/
+*.nupkg
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Publish output
+publish/
+
+# Minecraft data (too large, user-specific)
+minecraft/
+
+# Installer output
+Installer/
+
+# OS files
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# User config (contains tokens and personal settings)
+launcher_config.json
