@@ -15,7 +15,7 @@
 
 ## Скачать
 
-Скачайте последний релиз из [GitHub Releases](https://github.com/JohnAG/KVANTLauncher/releases).
+Скачайте последний релиз из [нашего сайта](https://kvant-net.vercel.app/ru/KVLauncher.html)).
 
 ## Требования
 
