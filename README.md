@@ -15,7 +15,7 @@
 
 ## Скачать
 
-Скачайте последний релиз из [нашего сайта](https://kvant-net.vercel.app/ru/KVLauncher.html)).
+Скачайте последний релиз с [нашего сайта](https://kvant-net.vercel.app/ru/KVLauncher.html) или из [GitHub Releases](https://github.com/JohnAG013/KvantLauncher/releases).
 
 ## Требования
 
@@ -26,7 +26,7 @@
 ## Сборка из исходников
 
 ```bash
-git clone https://github.com/JohnAG/KVANTLauncher.git
+git clone https://github.com/JohnAG013/KvantLauncher.git
 cd KVANTLauncher
 dotnet build
 ```

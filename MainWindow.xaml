@@ -785,6 +785,10 @@
                                          Click="OpenModsFolder_Click"
                                          Foreground="White"
                                          Background="#27272a"/>
+                                <MenuItem Header="🔄 Вернуть отключённые моды" 
+                                         Click="RestoreDisabledMods_Click"
+                                         Foreground="#10b981"
+                                         Background="#27272a"/>
                                 <MenuItem Header="✨ Шейдеры" 
                                          Click="OpenShadersFolder_Click"
                                          Foreground="White"

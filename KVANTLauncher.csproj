@@ -52,4 +52,10 @@
     <Resource Include="logo.ico" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Доверенные хеши должны лежать рядом с exe, иначе проверка загрузок невозможна -->
+    <None Include="trusted_assets.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="update_info.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

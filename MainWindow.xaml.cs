@@ -44,6 +44,7 @@ public partial class MainWindow : Window
     private string? _currentViewedScreenshot;
     private Dictionary<string, int> _conflictStats = new Dictionary<string, int>();
     private int _restartCount = 0;
+    private int _disabledModsCount = 0;
     private CancellationTokenSource? _launchCts;
     private bool _isSettingsLoading = false;
     private MSession? _session;
@@ -55,9 +56,67 @@ public partial class MainWindow : Window
 
     // --- Параметры для обновлений и хостинга ---
     private const string CurrentVersion = "1.2.0 Alpha"; // Текущая версия
-    // Ссылка на файл с информацией об обновлениях (замените на свою на GitHub)
-    private const string UpdateInfoUrl = "https://raw.githubusercontent.com/ваш_ник/KVANTLauncher/main/update_info.json";
-    // ------------------------------------------
+    // Ссылка на файл с информацией об обновлениях
+    private const string UpdateInfoUrl = "https://raw.githubusercontent.com/JohnAG013/KvantLauncher/main/update_info.json";
+
+    // Метод для логирования ошибок лаунчера (никогда не бросает исключений)
+    private void LogError(string message, Exception? ex = null)
+        => Services.LauncherLog.Error(message, ex);
+
+    // --- Миграция данных из старой установки в ProgramData ---
+    private void MigrateFromProgramData(string newPath)
+    {
+        try
+        {
+            string oldPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "KVANTLauncher");
+            if (!Directory.Exists(oldPath) || System.IO.Path.GetFullPath(oldPath) == System.IO.Path.GetFullPath(newPath))
+                return;
+            // Если новая папка уже существует с данными — не трогаем старую
+            if (Directory.Exists(newPath) &&
+                (Directory.GetFileSystemEntries(newPath).Length > 0 || !Directory.EnumerateFileSystemEntries(oldPath).Any()))
+                return;
+
+            Directory.CreateDirectory(newPath);
+            foreach (var entry in Directory.GetFileSystemEntries(oldPath))
+            {
+                string name = System.IO.Path.GetFileName(entry);
+                string dest = System.IO.Path.Combine(newPath, name);
+                if (Directory.Exists(entry))
+                {
+                    if (Directory.Exists(dest)) continue;
+                    Directory.Move(entry, dest);
+                }
+                else
+                {
+                    if (File.Exists(dest)) continue;
+                    File.Move(entry, dest);
+                }
+            }
+            Console.WriteLine($"[SYSTEM] Данные перенесены из {oldPath} в {newPath}");
+        }
+        catch (Exception ex)
+        {
+            LogError("Ошибка миграции из ProgramData", ex);
+        }
+    }
+
+    // --- Счётчик модов, отключённых прошлой попыткой авто-исправления ---
+    private void CountDisabledMods()
+    {
+        _disabledModsCount = 0;
+        try
+        {
+            string modsPath = System.IO.Path.Combine(_path.BasePath, "mods");
+            if (Directory.Exists(modsPath))
+                _disabledModsCount = Directory.GetFiles(modsPath, "*.jar.disabled").Length;
+        }
+        catch (Exception ex)
+        {
+            LogError("Ошибка подсчёта отключённых модов", ex);
+        }
+    }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
     private class MEMORYSTATUSEX
@@ -94,19 +153,20 @@ public partial class MainWindow : Window
             int useDarkMode = 1;
             DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ref useDarkMode, sizeof(int));
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     public MainWindow()
     {
         InitializeComponent();
-        Title = "KVANT Launcher v1.2.0 Alpha";
-        Console.WriteLine("[SYSTEM] Лаунчер запущен (v1.1.0-FIX-CAT)");
+        Title = $"KVANT Launcher v{CurrentVersion}";
+        Console.WriteLine("[SYSTEM] Лаунчер запущен (v1.2.0 Alpha)");
         ApplyDarkTitleBar();
         
-        // 1. Инициализация пути: папка "minecraft" ПРЯМО ТУТ (возле лаунчера)
-        // Используем BaseDirectory для надежности (чтобы не зависеть от рабочей папки)
-        var localPath = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "minecraft");
+        // 1. Инициализация пути: папка KVANTLauncher в LOCALAPPDATA
+        // Используем локальную папку приложения, чтобы не требовать админа и не писать в системные папки
+        var localPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "KVANTLauncher");
+        MigrateFromProgramData(localPath);
         _path = new MinecraftPath(localPath);
         
         // 2. Инициализация лаунчера
@@ -150,7 +210,7 @@ public partial class MainWindow : Window
                 string assemblyName = System.Reflection.Assembly.GetExecutingAssembly().GetName().Name ?? "KVANTLauncher";
                 this.Icon = new System.Windows.Media.Imaging.BitmapImage(new Uri($"pack://application:,,,/{assemblyName};component/logo_green.png"));
             }
-        } catch { }
+        } catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     // ===== Custom Title Bar Handlers =====
@@ -224,7 +284,7 @@ public partial class MainWindow : Window
         // т.к. их старое API аватарок ( /avatars/nickname ) часто возвращает 404
         if (_currentAuthType == "ElyBy") 
         {
-            string url = $"http://skinsystem.ely.by/skins/{nickname}.png";
+            string url = $"https://skin.ely.by/avatars/face/nickname/{nickname}";
             TxtStatus.Text = $"Загрузка скина Ely.by: {nickname}...";
             UpdateSkinByUrl(url, nickname);
         }
@@ -341,7 +401,7 @@ public partial class MainWindow : Window
             ImgSkinHead.Source = bitmap;
             BtnSkin.Tag = bitmap;
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     private void EnsureStandardFolders()
@@ -359,6 +419,12 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
+        CountDisabledMods(); // Считаем отключенные моды при запуске
+        if (_disabledModsCount > 0)
+        {
+            TxtStatus.Text = $"⚠️ {_disabledModsCount} мод отключено прошлой попыткой — Показать";
+            // Можно добавить балун или меню для восстановления
+        }
         SetupRamSlider();
         LoadSettings();
         LblVersion.Text = $"v{CurrentVersion}";
@@ -460,7 +526,7 @@ public partial class MainWindow : Window
                 }
             }
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
         finally
         {
             _isSettingsLoading = false;
@@ -677,7 +743,7 @@ public partial class MainWindow : Window
             
             if (BtnResetSkin != null) BtnResetSkin.Visibility = Visibility.Visible;
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     private void BtnSettings_Click(object sender, RoutedEventArgs e)
@@ -876,13 +942,30 @@ public partial class MainWindow : Window
                 }
             }
         }
-        catch { }
+        catch (Exception ex)
+        {
+            LogError("Ошибка при анализе лога", ex);
+            return new List<string> { $"❌ Критическая ошибка при чтении лога: {ex.Message}" };
+        }
         SaveSettings();
         return issues.Distinct().ToList();
     }
 
+    private readonly HashSet<string> _immobileMods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "fabric-api", "forge", "neoforge", "fabric-loader",
+        "sodium", "lithium", "indium", "architectury",
+        "cloth-config", "kotlin", "minecraft"
+    };
+
     private string SelectWorseMod(string modA, string modB)
     {
+        // Если один из модов — из списка недвижимых (ядро), никогда не переименовываем его
+        if (_immobileMods.Contains(modA) && !_immobileMods.Contains(modB))
+            return modB;
+        if (_immobileMods.Contains(modB) && !_immobileMods.Contains(modA))
+            return modA;
+
         _conflictStats.TryGetValue(modA, out int countA);
         _conflictStats.TryGetValue(modB, out int countB);
         
@@ -900,6 +983,17 @@ public partial class MainWindow : Window
 
     private string TryAutoFixConflict(string modId)
     {
+        // Не переименовываем ядра и важные моды
+        foreach (var immobile in _immobileMods)
+        {
+            if (modId.Equals(immobile, StringComparison.OrdinalIgnoreCase))
+            {
+                MessageBox.Show($"Мод {modId} является ядром лаунчера и не может быть переименован или отключен автоматически.\n\nУберите один из модов вручную.", 
+                    "Защита ядра", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return "";
+            }
+        }
+
         try
         {
             string modsPath = System.IO.Path.Combine(_path.BasePath, "mods");
@@ -927,7 +1021,7 @@ public partial class MainWindow : Window
                 return System.IO.Path.GetFileName(targetFile);
             }
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
         return "";
     }
 
@@ -1314,6 +1408,44 @@ public partial class MainWindow : Window
         BtnFolderMenu.ContextMenu.IsOpen = true;
     }
 
+    private void RestoreDisabledMods_Click(object sender, RoutedEventArgs e)
+    {
+        string modsPath = System.IO.Path.Combine(_path.BasePath, "mods");
+        if (!Directory.Exists(modsPath))
+        {
+            MessageBox.Show("Папка модов не найдена.", "Восстановление", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        int restored = 0;
+        foreach (var file in Directory.GetFiles(modsPath, "*.jar.disabled"))
+        {
+            string originalName = file.Replace(".disabled", "");
+            if (!System.IO.File.Exists(originalName))
+            {
+                try
+                {
+                    System.IO.File.Move(file, originalName);
+                    restored++;
+                }
+                catch { LogError("Необработанное исключение в блоке try"); }
+            }
+        }
+
+        if (restored > 0)
+        {
+            TxtStatus.Text = $"Восстановлено {restored} мод(а)";
+            CountDisabledMods(); // Пересчитываем
+            // Показываем индикатор, если моды остались
+            if (_disabledModsCount > 0)
+                TxtStatus.Text = $"⚠️ {_disabledModsCount} мод отключено прошлой попыткой — Показать";
+        }
+        else
+        {
+            MessageBox.Show("Нет отключенных модов для восстановления.", "Восстановление", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+    }
+
     private void OpenScreenshotsFolder_Click(object sender, RoutedEventArgs e)
     {
         var screenshotsPath = System.IO.Path.Combine(_path.BasePath, "screenshots");
@@ -1557,6 +1689,18 @@ public partial class MainWindow : Window
             string installerPath = System.IO.Path.Combine(tempDir, $"neoforge-{loaderVer}-installer.jar");
             await File.WriteAllBytesAsync(installerPath, installerBytes);
 
+            // 2.1. Проверка SHA-256 по официальному чексумму maven.neoforged.net
+            //     (сегодня maven не публикует чексуммы — до их появления файл принимается
+            //      с предупреждением и записью вычисленного хеша в лог, см. trusted_assets.json)
+            bool verified = await Services.DownloadVerifier.VerifyRemoteChecksumAsync(
+                "neoforge-installer", installerUrl, installerPath, client);
+            if (!verified)
+            {
+                throw new Exception(
+                    "Установщик NeoForge не прошёл проверку SHA-256.\n" +
+                    "Подробности в logs/launcher_errors.log");
+            }
+
             // 3. Запускаем: java -jar installer.jar --installClient <mcDir>
             // Используем ту же Java, что и для игры
             string javaExe = GetInstallerJavaPath();
@@ -1627,7 +1771,7 @@ public partial class MainWindow : Window
                     if (r.IsSuccessStatusCode && r.Content.Headers.ContentLength > 100_000)
                     { downloadUrl = url; jarName = name; break; }
                 }
-                catch { }
+                catch { LogError("Необработанное исключение в блоке try"); }
             }
 
             // Зеркало 2: bmclapi (популярное китайское зеркало, работает глобально)
@@ -1643,7 +1787,7 @@ public partial class MainWindow : Window
                         if (r.IsSuccessStatusCode)
                         { downloadUrl = url; jarName = name; break; }
                     }
-                    catch { }
+                    catch { LogError("Необработанное исключение в блоке try"); }
                 }
             }
 
@@ -1771,7 +1915,6 @@ public partial class MainWindow : Window
 
         try
         {
-            string downloadUrl = $"https://api.adoptium.net/v3/binary/latest/{requiredVersion}/ga/windows/x64/jdk/hotspot/normal/eclipse";
             string zipPath = System.IO.Path.Combine(_path.BasePath, $"java-{requiredVersion}.zip");
             string extractDir = System.IO.Path.Combine(_javaRuntimeDir, $"java-{requiredVersion}");
 
@@ -1779,10 +1922,23 @@ public partial class MainWindow : Window
             {
                 Directory.CreateDirectory(_javaRuntimeDir);
 
-                // Скачиваем
                 using (var client = new HttpClient())
                 {
                     client.Timeout = TimeSpan.FromMinutes(10);
+
+                    // 1. Берём ссылку и ОФИЦИАЛЬНЫЙ SHA-256 из API Adoptium (доверенный источник)
+                    string metaUrl = $"https://api.adoptium.net/v3/assets/latest/{requiredVersion}/hotspot" +
+                                     "?architecture=x64&image_type=jdk&os=windows&vendor=eclipse";
+                    string metaJson = await client.GetStringAsync(metaUrl);
+                    var meta = JsonConvert.DeserializeObject<Newtonsoft.Json.Linq.JArray>(metaJson);
+                    var pkg = meta?.FirstOrDefault()?["binary"]?["package"];
+                    string? downloadUrl = pkg?["link"]?.ToString();
+                    string? expectedSha256 = pkg?["checksum"]?.ToString();
+
+                    if (string.IsNullOrEmpty(downloadUrl) || string.IsNullOrEmpty(expectedSha256))
+                        throw new Exception("API Adoptium не вернул ссылку или SHA-256 на пакет Java.");
+
+                    // 2. Скачиваем сам пакет по официальной ссылке
                     var response = await client.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead);
                     response.EnsureSuccessStatusCode();
 
@@ -1806,6 +1962,15 @@ public partial class MainWindow : Window
                             }
                         }
                     }
+
+                    // 3. Сверяем SHA-256 с официальным чексуммом Adoptium (несовпадение = отказ, файл удаляется)
+                    if (!Services.DownloadVerifier.VerifyAgainstExpected(
+                            "adoptium-jdk", expectedSha256, zipPath,
+                            pkg?["size"]?.ToObject<long>() ?? 0))
+                    {
+                        TxtStatus.Text = "Java: файл не прошёл проверку SHA-256";
+                        return "java";
+                    }
                 }
 
                 // Распаковываем
@@ -1813,7 +1978,7 @@ public partial class MainWindow : Window
                 System.IO.Compression.ZipFile.ExtractToDirectory(zipPath, extractDir);
 
                 // Удаляем архив
-                try { File.Delete(zipPath); } catch { }
+                try { File.Delete(zipPath); } catch { LogError("Необработанное исключение в блоке try"); }
             }
 
             // Находим java.exe в распакованной папке
@@ -2010,7 +2175,11 @@ public partial class MainWindow : Window
                         killedByWatchdog = true;
                         // Даем логам время "дотечь", чтобы мы могли их прочитать
                         await Task.Delay(1500); 
-                        if (!process.HasExited) { try { process.Kill(); } catch { } }
+                        if (!process.HasExited)
+{
+    try { process.Kill(); }
+    catch (Exception ex) { LogError("Не удалось убить процесс игры", ex); }
+}
                         break;
                     }
                     await Task.Delay(500);
@@ -2168,6 +2337,15 @@ public partial class MainWindow : Window
 
             if (updateInfo != null && updateInfo.Version != CurrentVersion)
             {
+                // Обновление выполняется только по HTTPS — иначе отказ
+                if (string.IsNullOrEmpty(updateInfo.DownloadUrl) ||
+                    !updateInfo.DownloadUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                {
+                    Services.DownloadVerifier.Log(
+                        $"UPDATE: отказ — DownloadUrl не HTTPS: \"{updateInfo.DownloadUrl}\"");
+                    return;
+                }
+
                 var result = MessageBox.Show(
                     $"Доступна новая версия: {updateInfo.Version}\n\nЧто нового:\n{updateInfo.Changelog}\n\nОбновить сейчас?",
                     "Обновление KVANT Launcher",
@@ -2176,17 +2354,87 @@ public partial class MainWindow : Window
 
                 if (result == MessageBoxResult.Yes)
                 {
-                    // Открываем ссылку на скачивание архива (GitHub Releases)
+                    // Скачиваем обновление во временную папку
+                    string tempDir = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "KVANT_Update");
+                    if (Directory.Exists(tempDir))
+                        Directory.Delete(tempDir, true);
+                    Directory.CreateDirectory(tempDir);
+
+                    TxtStatus.Text = "Скачивание обновления...";
+                    using (var downloadClient = new System.Net.Http.HttpClient())
+                    {
+                        var downloadResponse = await downloadClient.GetAsync(updateInfo.DownloadUrl, System.Net.Http.HttpCompletionOption.ResponseHeadersRead);
+                        downloadResponse.EnsureSuccessStatusCode();
+
+                        long? totalBytes = downloadResponse.Content.Headers.ContentLength;
+                        using (var stream = await downloadResponse.Content.ReadAsStreamAsync())
+                        using (var fileStream = new FileStream(System.IO.Path.Combine(tempDir, "KVANTLauncher_Setup.exe"), FileMode.Create, FileAccess.Write))
+                        {
+                            byte[] buffer = new byte[8192];
+                            long downloaded = 0;
+                            int bytesRead;
+                            while ((bytesRead = await stream.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                            {
+                                await fileStream.WriteAsync(buffer, 0, bytesRead);
+                                downloaded += bytesRead;
+                                if (totalBytes > 0)
+                                {
+                                    int progress = (int)(downloaded * 100 / totalBytes.Value);
+                                    TxtStatus.Text = $"Скачивание обновления... {progress}%";
+                                }
+                            }
+                        }
+                    }
+
+                    // Проверка SHA-256 установщика ДО запуска: мы скачали файл и собираемся
+                    // его выполнить, поэтому доверять ему нельзя без контрольной суммы
+                    string setupPath = System.IO.Path.Combine(tempDir, "KVANTLauncher_Setup.exe");
+                    bool approved;
+                    if (!string.IsNullOrWhiteSpace(updateInfo.Sha256))
+                    {
+                        approved = Services.DownloadVerifier.VerifyAgainstExpected(
+                            "self-update", updateInfo.Sha256.Trim(), setupPath);
+                        if (!approved)
+                        {
+                            TxtStatus.Text = "Обновление отклонено: SHA-256 не совпал";
+                            MessageBox.Show(
+                                "Установщик обновления не прошёл проверку SHA-256 и удалён.\n\n" +
+                                "Подробности: logs/launcher_errors.log",
+                                "Проверка обновления", MessageBoxButton.OK, MessageBoxImage.Error);
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        // Нет хеша в манифесте — сами не решаем, спрашиваем пользователя
+                        Services.DownloadVerifier.Log(
+                            $"UPDATE: в update_info.json нет SHA-256 для {updateInfo.Version} — требуется явное подтверждение");
+                        approved = MessageBox.Show(
+                            "В манифесте обновления не опубликована контрольная сумма.\n" +
+                            "Установить без проверки SHA-256?",
+                            "Проверка обновления",
+                            MessageBoxButton.YesNo, MessageBoxImage.Warning) == MessageBoxResult.Yes;
+                        if (!approved) return;
+                    }
+
+                    // Запускаем установку
+                    TxtStatus.Text = "Запуск установщика обновления...";
                     Process.Start(new ProcessStartInfo
                     {
-                        FileName = updateInfo.DownloadUrl,
+                        FileName = setupPath,
                         UseShellExecute = true
                     });
-                    // В идеале здесь можно скачать updater.exe, который заменит основной файл
+
+                    // Закрываем текущий лаунчер после запуска обновления
+                    Application.Current.Shutdown();
                 }
             }
         }
-        catch { /* Ошибка проверки (нет интернета или файла) */ }
+        catch (Exception ex)
+        {
+            Console.WriteLine("[UPDATE ERROR] " + ex.Message);
+            TxtStatus.Text = "Ошибка проверки обновлений";
+        }
     }
     private bool IsFabricVersion(string version)
     {
@@ -2231,7 +2479,7 @@ public partial class MainWindow : Window
                     }
                 }
             }
-            catch { }
+            catch { LogError("Необработанное исключение в блоке try"); }
 
             // 2. NeoForge (Maven)
             try
@@ -2255,7 +2503,7 @@ public partial class MainWindow : Window
                     }
                 }
             }
-            catch { }
+            catch { LogError("Необработанное исключение в блоке try"); }
 
             // 3. Fabric (Meta Meta API)
             try
@@ -2274,7 +2522,7 @@ public partial class MainWindow : Window
                     }
                 }
             }
-            catch { }
+            catch { LogError("Необработанное исключение в блоке try"); }
 
             // ФОЛБЭКИ: Если интернета нет или API лежат, добавляем популярные версии
             if (_availableOptiFineVersions.Count == 0)
@@ -2297,7 +2545,7 @@ public partial class MainWindow : Window
             var allVers = await _launcher.GetAllVersionsAsync();
             Dispatcher.Invoke(() => UpdateVersionList(allVers));
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     private void ClearMinecraftCache()
@@ -2317,7 +2565,7 @@ public partial class MainWindow : Window
             }
 
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     private void PatchVersionJsonForthlib(string versionName)
@@ -2361,7 +2609,7 @@ public partial class MainWindow : Window
             
             if (changed) System.IO.File.WriteAllText(jsonPath, content);
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
     }
 
     private IEnumerable<MArgument> GetJvmArguments(int ram, int jv = -1)
@@ -2462,21 +2710,58 @@ public partial class MainWindow : Window
             await File.WriteAllTextAsync(extraListPath, configJson);
 
             // 2. ПРОВЕРЯЕМ НАЛИЧИЕ МОДА
-            var existingMods = Directory.GetFiles(modsDir, "*CustomSkinLoader*.jar");
-            if (existingMods.Length > 0) return;
+            string ownModPath = System.IO.Path.Combine(modsDir, "CustomSkinLoader-KVANT-FIX.jar");
+            if (File.Exists(ownModPath))
+            {
+                // Наш файл — сверяем с доверенным хешем (несовпадение = удаление и перекачка)
+                if (Services.DownloadVerifier.VerifyExisting("customskinloader", ownModPath))
+                    return;
+            }
+            else if (Directory.GetFiles(modsDir, "*CustomSkinLoader*.jar").Length > 0)
+            {
+                return; // Пользователь сам поставил другой CSL — не вмешиваемся
+            }
 
             TxtStatus.Text = "Установка патча скинов (CSL)...";
-            
-            // Ссылка на стабильную версию мода (универсальная для 1.16-1.21)
-            // В идеале тут должен быть выбор под версию, но для начала поставим самую совместимую
-            string downloadUrl = "https://github.com/xfl03/CustomSkinLoader/releases/download/14.19/CustomSkinLoader_Forge-14.19.jar";
-            if (versionName.ToLower().Contains("fabric"))
-                downloadUrl = "https://github.com/xfl03/CustomSkinLoader/releases/download/14.19/CustomSkinLoader_Fabric-14.19.jar";
+
+            // Доверенный источник берём из trusted_assets.json (Modrinth, Universal-сборка)
+            var asset = Services.DownloadVerifier.GetAsset("customskinloader");
+            if (asset == null || asset.Sources.Count == 0)
+            {
+                Services.DownloadVerifier.Log("SECURITY: отказ — нет доверенных источников customskinloader");
+                return;
+            }
 
             using var client = new HttpClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-            var bytes = await client.GetByteArrayAsync(downloadUrl);
-            await File.WriteAllBytesAsync(System.IO.Path.Combine(modsDir, "CustomSkinLoader-KVANT-FIX.jar"), bytes);
+
+            string destPath = System.IO.Path.Combine(modsDir, "CustomSkinLoader-KVANT-FIX.jar");
+            bool installed = false;
+
+            foreach (var source in asset.Sources)
+            {
+                try
+                {
+                    byte[] bytes = await client.GetByteArrayAsync(source.Url);
+                    string tmp = destPath + ".download";
+                    await File.WriteAllBytesAsync(tmp, bytes);
+
+                    if (Services.DownloadVerifier.VerifyPinned("customskinloader", source.Url, tmp))
+                    {
+                        if (File.Exists(destPath)) File.Delete(destPath);
+                        File.Move(tmp, destPath);
+                        installed = true;
+                        break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Services.DownloadVerifier.Log($"customskinloader: ошибка загрузки {source.Url} — {ex.Message}");
+                }
+            }
+
+            if (!installed)
+                Services.DownloadVerifier.Log("SECURITY: customskinloader не установлен — источник не прошёл проверку SHA-256");
         }
         catch { /* Ошибка установки мода не должна вешать кнопку "Играть" */ }
     }
@@ -2500,7 +2785,7 @@ public partial class MainWindow : Window
                 }
             }
         }
-        catch { }
+        catch { LogError("Необработанное исключение в блоке try"); }
         return "";
     }
 
@@ -2546,9 +2831,10 @@ public partial class MainWindow : Window
     private async Task EnsureAuthlibInjector()
     {
         string path = System.IO.Path.Combine(_path.BasePath, "authlib-injector.jar");
-        
-        // Если файл есть и он нормального размера, не качаем
-        if (System.IO.File.Exists(path) && new FileInfo(path).Length > 100000) return;
+
+        // Если файл уже есть — всё равно сверяем с доверенным хешем (иначе проверка смысла не имеет)
+        if (File.Exists(path) && Services.DownloadVerifier.VerifyExisting("authlib-injector", path))
+            return;
 
         try
         {
@@ -2558,29 +2844,49 @@ public partial class MainWindow : Window
 
             using var client = new HttpClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-            
-            // Пробуем несколько источников
-            string[] urls = {
-                "https://authlib-injector.ely.by/artifact/latest/authlib-injector.jar",
-                "https://bmclapi2.bangbang93.com/mirrors/authlib-injector/artifact/latest/authlib-injector.jar",
-                "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.5/authlib-injector-1.2.5.jar"
-            };
 
-            foreach (var url in urls)
+            // Источники берём из trusted_assets.json — каждый проверяется по SHA-256
+            var asset = Services.DownloadVerifier.GetAsset("authlib-injector");
+            if (asset == null || asset.Sources.Count == 0)
             {
-                try {
-                    TxtStatus.Text = "Загрузка системы скинов...";
-                    var response = await client.GetAsync(url);
-                    if (response.IsSuccessStatusCode)
-                    {
-                        var bytes = await response.Content.ReadAsByteArrayAsync();
-                        if (bytes.Length > 100000) {
-                            await File.WriteAllBytesAsync(path, bytes);
-                            return;
-                        }
-                    }
-                } catch { continue; }
+                Services.DownloadVerifier.Log("SECURITY: отказ — нет доверенных источников authlib-injector, загрузка отменена");
+                return;
             }
+
+            foreach (var source in asset.Sources)
+            {
+                try
+                {
+                    TxtStatus.Text = "Загрузка системы скинов...";
+                    var response = await client.GetAsync(source.Url);
+                    if (!response.IsSuccessStatusCode) continue;
+
+                    byte[] bytes = await response.Content.ReadAsByteArrayAsync();
+                    if (bytes.Length < 100000) continue;
+
+                    // Скачиваем во временный файл и проверяем SHA-256 до установки
+                    string tmp = path + ".download";
+                    await File.WriteAllBytesAsync(tmp, bytes);
+                    if (Services.DownloadVerifier.VerifyPinned("authlib-injector", source.Url, tmp))
+                    {
+                        if (File.Exists(path)) File.Delete(path);
+                        File.Move(tmp, path);
+                        return;
+                    }
+                    // VerifyPinned уже залогировал отказ и удалил файл — пробуем следующий источник
+                }
+                catch (Exception ex)
+                {
+                    Services.DownloadVerifier.Log($"authlib-injector: ошибка загрузки {source.Url} — {ex.Message}");
+                    continue;
+                }
+            }
+
+            Services.DownloadVerifier.Log("SECURITY: ни один источник authlib-injector не прошёл проверку SHA-256");
+            System.Windows.MessageBox.Show(
+                "Не удалось загрузить authlib-injector: файлы не прошли проверку SHA-256.\n" +
+                "Подробности: logs/launcher_errors.log",
+                "Проверка безопасности", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception ex)
         {
@@ -2594,6 +2900,8 @@ public class UpdateData
     public string Version { get; set; } = "";
     public string DownloadUrl { get; set; } = "";
     public string Changelog { get; set; } = "";
+    /// <summary>SHA-256 установщика (lowercase hex). Пусто = обновление только с подтверждением пользователя.</summary>
+    public string Sha256 { get; set; } = "";
 }
 
 public class LauncherConfig

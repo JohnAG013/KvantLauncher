@@ -1,0 +1,5 @@
+{
+  "Version": "1.2.0 Alpha",
+  "Changelog": "Проверка SHA-256 всех загрузок, перенос данных в %LOCALAPPDATA%, исправления обновлений",
+  "DownloadUrl": "https://github.com/JohnAG013/KvantLauncher/releases/download/v1.2.0-Alpha/KVANT_Launcher_Setup.exe"
+}

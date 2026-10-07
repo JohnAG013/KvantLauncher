@@ -56,7 +56,7 @@ namespace KVANTLauncher
                     if (BtnCopyRealIP != null) BtnCopyRealIP.Visibility = Visibility.Visible;
                 });
             }
-            catch { }
+            catch (Exception ex) { KVANTLauncher.Services.LauncherLog.Error("ServerWindow: не удалось получить внешний IP", ex); }
         }
 
         private string GenerateStaticIP(string input, string networkContext = "LOCAL")
@@ -131,7 +131,8 @@ namespace KVANTLauncher
 
             if (_connection != null)
             {
-                try { await _connection.StopAsync(); } catch { }
+                try { await _connection.StopAsync(); }
+                catch (Exception ex) { KVANTLauncher.Services.LauncherLog.Error("ServerWindow: ошибка остановки подключения к хабу", ex); }
             }
             
             _realIp = "";
@@ -279,7 +280,7 @@ namespace KVANTLauncher
             {
                 try { 
                     await _connection.InvokeAsync("JoinNetwork", title, _nickname, _virtualIp); 
-                } catch { }
+                } catch (Exception ex) { KVANTLauncher.Services.LauncherLog.Error("ServerWindow: JoinNetwork не выполнен", ex); }
             }
             else
             {
@@ -292,8 +293,10 @@ namespace KVANTLauncher
         {
             if (_device != null && _currentMapping != null)
             {
-                try { await _device.DeletePortMapAsync(_currentMapping); } catch { }
-                try { await _device.DeletePortMapAsync(new Mapping(Protocol.Tcp, _hubPort, _hubPort, "KVANT Lobby Hub")); } catch { }
+                try { await _device.DeletePortMapAsync(_currentMapping); }
+                catch (Exception ex) { KVANTLauncher.Services.LauncherLog.Error("ServerWindow: не удалось удалить проброс порта", ex); }
+                try { await _device.DeletePortMapAsync(new Mapping(Protocol.Tcp, _hubPort, _hubPort, "KVANT Lobby Hub")); }
+                catch (Exception ex) { KVANTLauncher.Services.LauncherLog.Error("ServerWindow: не удалось удалить проброс порта хаба", ex); }
                 _device = null;
             }
 

@@ -1,0 +1,139 @@
+name: KVANT Launcher Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # Выходные файлы попадают в bin\Release\net8.0-windows\win-x64\publish\
+      # setup.iss ([Files]) ссылается именно на этот путь.
+      - name: Publish (Release, win-x64)
+        run: dotnet publish -c Release -r win-x64
+        shell: pwsh
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y --no-progress
+        shell: pwsh
+
+      # ISCC собирает Installer\KVANT_Launcher_Setup.exe (OutputDir=Installer в setup.iss)
+      - name: Build installer (setup.iss)
+        shell: pwsh
+        run: |
+          $iscc = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { throw 'ISCC.exe not found' }
+          & $iscc setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed with code $LASTEXITCODE" }
+
+      - name: Generate SHA256SUMS.txt
+        shell: pwsh
+        run: |
+          $installer = 'Installer\KVANT_Launcher_Setup.exe'
+          if (-not (Test-Path $installer)) { throw "$installer not found" }
+          $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLower()
+          $size = (Get-Item $installer).Length
+          $version = (Select-String -Path setup.iss -Pattern '^AppVersion=(.+)$').Matches[0].Groups[1].Value
+          $lines = @(
+            "# KVANT Launcher $version - SHA-256 sums",
+            "# Generated: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')",
+            "# Verify with: certutil -hashfile <file> SHA256",
+            '',
+            "$hash *KVANT_Launcher_Setup.exe",
+            "#   size=$size bytes"
+          )
+          Set-Content -Path SHA256SUMS.txt -Value $lines -Encoding ascii
+          Get-Content SHA256SUMS.txt
+
+      # gh release create падает, если релиз уже существует (повторный прогон тега) —
+      # тогда просто перезаливаем артефакты через gh release upload --clobber
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          gh release create $tag `
+            --repo $env:GITHUB_REPOSITORY `
+            --title "KVANT Launcher $tag" `
+            --generate-notes `
+            "Installer\KVANT_Launcher_Setup.exe" `
+            "SHA256SUMS.txt"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "Release $tag already exists, uploading artifacts with --clobber"
+            gh release upload $tag `
+              --repo $env:GITHUB_REPOSITORY `
+              --clobber `
+              "Installer\KVANT_Launcher_Setup.exe" `
+              "SHA256SUMS.txt"
+            if ($LASTEXITCODE -ne 0) { throw "gh release upload failed ($LASTEXITCODE)" }
+          }
+
+      # Публикуем настоящий SHA-256 свежесобранного установщика в update_info.json (ветка main).
+      # Лаунчер сверяет этот хеш ДО запуска установщика — иначе самообновление небезопасно.
+      - name: Publish update manifest (update_info.json)
+        shell: pwsh
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $repo = $env:GITHUB_REPOSITORY
+          $tag  = $env:GITHUB_REF_NAME
+
+          # Версия берётся из единственного источника правды — CurrentVersion в MainWindow.xaml.cs
+          $cs = Get-Content MainWindow.xaml.cs -Raw
+          if ($cs -notmatch 'CurrentVersion\s*=\s*"([^"]+)"') { throw 'CurrentVersion not found in MainWindow.xaml.cs' }
+          $version = $Matches[1]
+
+          $hash = (Get-FileHash -Algorithm SHA256 'Installer\KVANT_Launcher_Setup.exe').Hash.ToLower()
+          $url  = "https://github.com/$repo/releases/download/$tag/KVANT_Launcher_Setup.exe"
+
+          $notes = (gh release view $tag --repo $repo --json body -q .body 2>$null)
+          if (-not $notes) { $notes = "Release $tag" }
+          if ($notes.Length -gt 600) { $notes = $notes.Substring(0, 600) }
+
+          $manifest = [ordered]@{
+            Version    = $version
+            Changelog  = $notes
+            DownloadUrl = $url
+            Sha256     = $hash
+          }
+          $json = ($manifest | ConvertTo-Json)
+
+          $old = (gh api "repos/$repo/contents/update_info.json" 2>$null | ConvertFrom-Json)
+          $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+
+          $apiArgs = @('-X', 'PUT', "repos/$repo/contents/update_info.json",
+                       '-f', "message=chore: update_info.json $version ($tag) sha256=$hash",
+                       '-f', "content=$content",
+                       '-f', 'branch=main')
+          if ($old -and $old.sha) { $apiArgs += @('-f', "sha=$($old.sha)") }
+
+          gh api @apiArgs
+          if ($LASTEXITCODE -ne 0) { throw "failed to commit update_info.json ($LASTEXITCODE)" }
+          Write-Output "update_info.json published: $version sha256=$hash"
+
+      - name: Upload artifacts (для отладки)
+        uses: actions/upload-artifact@v4
+        with:
+          name: KVANT_Launcher_Setup
+          path: |
+            Installer\KVANT_Launcher_Setup.exe
+            SHA256SUMS.txt

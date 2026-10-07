@@ -1,9 +1,10 @@
 [Setup]
 AppId={{KVANT-LAUNCHER-UUID}}
 AppName=KVANT Launcher
-AppVersion=1.1.0_Alpha
-; Ставим в ProgramData, чтобы не было проблем с правами при скачивании модов
-DefaultDirName={commonappdata}\KVANTLauncher
+AppVersion=1.2.0_Alpha
+; Ставим в локальную папку пользователя: не нужны права админа,
+; не пишем в системные папки, SmartScreen и антивирусы меньше триггерятся
+DefaultDirName={localappdata}\KVANTLauncher
 DefaultGroupName=KVANT Launcher
 UninstallDisplayIcon={app}\logo.ico
 SetupIconFile=logo.ico
@@ -11,7 +12,8 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 OutputDir=Installer
 OutputBaseFilename=KVANT_Launcher_Setup
-PrivilegesRequired=admin
+; lowest = установка без требований администратора
+PrivilegesRequired=lowest
 
 [Languages]
 Name: "russian"; MessagesFile: "compiler:Languages\Russian.isl"
@@ -44,23 +46,22 @@ begin
   begin
     AppDir := ExpandConstant('{app}');
     
-    // Автоматическое удаление всех файлов кроме миров и скриншотов
+    // Папки 'saves' и 'screenshots' не трогаем по просьбе пользователя
+    // mods, resourcepacks и shaderpacks пользователя также не удаляем
+    // Пользователь копал эти файлы часами, удалять их при деинсталляции недопустимо
+
+    // Удаляем только системные папки лаунчера
     DelTree(AppDir + '\versions', True, True, True);
     DelTree(AppDir + '\libraries', True, True, True);
     DelTree(AppDir + '\assets', True, True, True);
     DelTree(AppDir + '\runtime', True, True, True);
-    DelTree(AppDir + '\mods', True, True, True);
-    DelTree(AppDir + '\logs', True, True, True);
-    DelTree(AppDir + '\resourcepacks', True, True, True);
-    DelTree(AppDir + '\shaderpacks', True, True, True);
-    
-    // Удаление конфигов
+    // DelTree(AppDir + '\logs', True, True, True); // оставляем логи для чистоты
+
+    // Конфиги удаляем
     DeleteFile(AppDir + '\launcher_config.json');
     DeleteFile(AppDir + '\dev_log.txt');
-    
-    // Папки 'saves' и 'screenshots' не трогаем по просьбе пользователя
-    
-    // Попытка удалить корневую папку (сработает только если вручную удалены миры/скрины)
+
+    // Корневую папку удаляем только если пользователь удалил миры/скрины вручную
     RemoveDir(AppDir);
   end;
 end;

@@ -1,0 +1,56 @@
+{
+  "_comment": "Доверенные источники загрузки. Хеши вычислены официальными релизами (SHA-256, lowercase hex). kind: pinned = хеш зашит здесь; remote-sha256 = хеш берётся с checksumUrl; adoptium-api = ссылка и хеш берутся из api.adoptium.net.",
+  "generated": "2026-10-07",
+  "assets": [
+    {
+      "id": "authlib-injector",
+      "kind": "pinned",
+      "minSize": 100000,
+      "requireHash": true,
+      "sources": [
+        {
+          "url": "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.8/authlib-injector-1.2.8.jar",
+          "sha256": "9c7f4343e6c82034958ffb48c14a2cb0c85928be7283103ce17da00c6d5a7b10",
+          "size": 349681
+        }
+      ]
+    },
+    {
+      "id": "customskinloader",
+      "kind": "pinned",
+      "minSize": 100000,
+      "requireHash": true,
+      "sources": [
+        {
+          "url": "https://cdn.modrinth.com/data/idMHQ4n2/versions/OLaesh5y/CustomSkinLoader_Universal-15.0.1.jar",
+          "sha256": "026d8b38ea93edccd647f60568193e79801a377b7bd4e916dcfc0d5482b767fc",
+          "size": 218215
+        }
+      ]
+    },
+    {
+      "id": "adoptium-jdk",
+      "kind": "adoptium-api",
+      "minSize": 10000000,
+      "requireHash": true,
+      "sources": []
+    },
+    {
+      "id": "self-update",
+      "kind": "manifest-sha256",
+      "minSize": 1000000,
+      "requireHash": true,
+      "_note": "Установщик, скачанный по ссылке из update_info.json. Хеш берётся из поля Sha256 манифеста; при отсутствии хеша лаунчер требует явного подтверждения пользователя.",
+      "sources": []
+    },
+    {
+      "id": "neoforge-installer",
+      "kind": "remote-sha256",
+      "minSize": 1000000,
+      "requireHash": false,
+      "checksumUrl": "{url}.sha256",
+      "_note": "maven.neoforged.net сегодня не публикует чексуммы: пока их нет, файл принимается с предупреждением и записью вычисленного SHA-256 в лог. Как только maven начнёт отдавать .sha256/.sha1 — проверка включится автоматически.",
+      "sources": []
+    }
+  ]
+}

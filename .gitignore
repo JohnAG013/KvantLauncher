@@ -25,6 +25,7 @@ publish/
 minecraft/
 
 # Installer output
+KVANT_Launcher_Setup.exe
 Installer/
 
 # OS files

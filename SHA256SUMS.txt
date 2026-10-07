@@ -1,0 +1,11 @@
+# KVANT Launcher 1.2.0_Alpha - SHA-256 sums
+# Generated: 2026-10-08 00:30:20
+# Verify with: certutil -hashfile <file> SHA256
+# NOTE: KVANT_Launcher_Setup.exe in repo root is a stale 2026-02-08 build;
+#       the release artifact is Installer/KVANT_Launcher_Setup.exe
+
+a4a953889d7b4c286cae59aed3a642e760eb099cfc0178773d78da5a5631b4ce *Installer/KVANT_Launcher_Setup.exe
+#   size=82478383 bytes  date=2026-10-08 00:30:20
+
+f158d82054ffa465bfc533c916b8fc36b0e4bcbfac42af95b39575b18f9f66bc *KVANT_Launcher_Setup.exe
+#   size=4281927 bytes  date=2026-02-08 22:27:18
